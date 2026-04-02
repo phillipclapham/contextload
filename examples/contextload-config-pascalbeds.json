@@ -1,0 +1,97 @@
+{
+  "version": "1.0",
+  "mode": "dryrun",
+  "site": "pascalbeds.mystagingwebsite.com",
+
+  "never_suppress": [
+    "woocommerce",
+    "woocommerce-payments",
+    "woocommerce-gateway-*",
+    "woocommerce-shipping-*",
+    "woocommerce-subscriptions",
+    "rvvup-for-woocommerce",
+    "pymntpl-paypal-woocommerce",
+    "woo-stripe-payment",
+    "woodmart-core",
+    "f4-woocommerce-shipping-phone-and-e-mail",
+    "woo-custom-product-addons-pro",
+    "woocommerce-conditional-content",
+    "woocommerce-order-status-manager",
+    "disable-cart-fragments",
+    "wpcode-premium",
+    "wordfence",
+    "sucuri-scanner",
+    "better-wp-security",
+    "really-simple-ssl",
+    "real-cookie-banner",
+    "complianz-gdpr",
+    "wp-rocket",
+    "wp-asset-clean-up-pro",
+    "js_composer",
+    "jetpack",
+    "jetpack-boost"
+  ],
+
+  "contexts": {
+    "checkout": {
+      "suppress": [
+        "seo-by-rank-math",
+        "seo-by-rank-math-pro",
+        "js_composer",
+        "wpforms",
+        "wp-mail-smtp-pro",
+        "wp-all-import-pro",
+        "wpai-woocommerce-add-on",
+        "customer-reviews-woocommerce",
+        "iconic-woothumbs",
+        "swatchly-pro",
+        "variation-price-display",
+        "variation-price-display-pro",
+        "click-to-chat-for-whatsapp",
+        "elfsight-faq-cc",
+        "improved-sale-badges",
+        "trustpilot-reviews",
+        "woocommerce-product-feeds",
+        "wp-downgrade",
+        "index-wp-mysql-for-speed",
+        "woocommerce-order-export",
+        "woo-update-manager",
+        "capabilities-pro",
+        "mystickymenu-pro",
+        "email-customizer-for-woocommerce",
+        "woocommerce-pdf-invoices-packing-slips",
+        "woocommerce-pdf-ips-templates",
+        "woocommerce-pdf-ips-pro",
+        "wpnotif",
+        "pixelyoursite",
+        "klaviyo",
+        "duracelltomi-google-tag-manager"
+      ]
+    },
+
+    "cart": {
+      "suppress": [
+        "seo-by-rank-math",
+        "seo-by-rank-math-pro",
+        "js_composer",
+        "wpforms",
+        "wp-mail-smtp-pro",
+        "wp-all-import-pro",
+        "wpai-woocommerce-add-on",
+        "customer-reviews-woocommerce",
+        "iconic-woothumbs",
+        "woocommerce-product-feeds",
+        "wp-downgrade",
+        "index-wp-mysql-for-speed",
+        "woocommerce-order-export",
+        "woo-update-manager",
+        "capabilities-pro",
+        "email-customizer-for-woocommerce",
+        "woocommerce-pdf-invoices-packing-slips",
+        "woocommerce-pdf-ips-templates",
+        "woocommerce-pdf-ips-pro",
+        "wpnotif"
+      ]
+    }
+  }
+}
