@@ -1,0 +1,258 @@
+{
+  "version": "1.0",
+  "mode": "dryrun",
+
+  "_comment_mode": "dryrun = logs what would be suppressed but loads everything. active = actually suppresses. disabled = off.",
+
+  "never_suppress": [
+    "woocommerce",
+    "woocommerce-payments",
+    "woocommerce-gateway-*",
+    "woocommerce-shipping-*",
+    "woocommerce-subscriptions",
+    "woocommerce-product-bundles",
+    "woocommerce-gift-cards",
+    "woocommerce-points-and-rewards",
+    "automatewoo",
+    "stripe-for-woocommerce",
+    "checkout-plugins-stripe-woo",
+    "payment-gateway-stripe-and-woocommerce-integration",
+    "woocommerce-square",
+    "klarna-*",
+    "afterpay-gateway-for-woocommerce",
+    "rvvup",
+    "viva-com-smart-for-woocommerce",
+    "wordfence",
+    "sucuri-scanner",
+    "better-wp-security",
+    "really-simple-ssl",
+    "real-cookie-banner",
+    "complianz-gdpr",
+    "cookie-notice",
+    "cookiebot",
+    "wp-rocket",
+    "litespeed-cache",
+    "autoptimize",
+    "perfmatters",
+    "wp-asset-clean-up",
+    "wp-asset-clean-up-pro",
+    "pressable-cache-management",
+    "jetpack",
+    "jetpack-boost"
+  ],
+
+  "_comment_never_suppress": "Global safety rail. These ALWAYS load regardless of context. Globs for gateway/shipping families. Intentionally NO wc-*/woo-* broad globs — those protect cache-breaking plugins (woo-variation-swatches etc). Add specific WC extensions here as needed.",
+
+  "contexts": {
+    "checkout": {
+      "_description": "WooCommerce checkout — only revenue-path plugins needed. Suppress everything that doesn't contribute to browse->cart->pay->confirm.",
+
+      "suppress": [
+        "wordpress-seo",
+        "wordpress-seo-premium",
+        "all-in-one-seo-pack",
+        "all-in-one-seo-pack-pro",
+        "rank-math-seo",
+        "rank-math-seo-pro",
+        "the-seo-framework",
+        "the-seo-framework-extension-manager",
+        "seo-by-rank-math",
+        "squirrly-seo",
+
+        "elementor",
+        "elementor-pro",
+        "js_composer",
+        "beaver-builder-lite-version",
+        "bb-plugin",
+        "brizy",
+        "oxygen",
+        "bricks",
+        "generateblocks",
+        "stackable-ultimate-gutenberg-blocks",
+        "kadence-blocks",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+        "wpforms-pro",
+        "formidable",
+        "formidable-pro",
+        "gravityforms",
+        "ninja-forms",
+        "ninja-forms-pro",
+        "forminator",
+        "forminator-pro",
+        "happyforms",
+        "everest-forms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+        "blogvault-real-time-backup",
+        "backup-backup",
+
+        "wp-smushit",
+        "ewww-image-optimizer",
+        "ewww-image-optimizer-cloud",
+        "imagify",
+        "shortpixel-image-optimiser",
+        "shortpixel-adaptive-images",
+        "optimole-wp",
+        "robin-image-optimizer",
+
+        "revslider",
+        "ml-slider",
+        "nextgen-gallery",
+        "envira-gallery-lite",
+        "envira-gallery",
+        "modula-best-grid-gallery",
+        "robo-gallery",
+
+        "social-warfare",
+        "shareaholic",
+        "monarch",
+        "instagram-feed",
+        "custom-facebook-feed",
+        "feeds-for-youtube",
+        "easy-social-share-buttons3",
+        "social-snap",
+
+        "redirection",
+        "safe-redirect-manager",
+        "eps-301-redirects",
+
+        "akismet",
+        "disqus-comment-system",
+        "wpDiscuz",
+
+        "classic-editor",
+        "classic-widgets",
+        "tinymce-advanced",
+        "advanced-editor-tools",
+
+        "tablepress",
+        "easy-table-of-contents",
+        "broken-link-checker",
+        "google-sitemap-generator",
+        "xml-sitemap-generator-for-google",
+        "better-search-replace",
+        "wp-crontrol",
+
+        "yith-woocommerce-wishlist",
+        "yith-woocommerce-compare",
+        "yith-woocommerce-advanced-reviews",
+        "ti-woocommerce-wishlist",
+
+        "woocommerce-product-recommendations",
+        "woo-related-products",
+        "recently-viewed-products-for-woocommerce",
+        "clerk-io",
+
+        "advanced-custom-fields",
+        "advanced-custom-fields-pro",
+        "custom-post-type-ui",
+        "pods",
+
+        "popup-maker",
+        "optinmonster",
+        "sumo",
+        "convertbox",
+        "hustle",
+
+        "loco-translate",
+        "translatepress-multilingual",
+
+        "members",
+        "user-role-editor",
+
+        "wp-mail-smtp",
+        "post-smtp",
+
+        "woolentor-addons",
+        "woolentor-addons-pro",
+        "jetwoobuilder",
+        "shopengine"
+      ],
+
+      "_comment_suppress": "Curated from 30+ WooCommerce audits. Each plugin verified as non-essential for checkout flow. Categories: SEO, page builders, forms, backup, image optimization, sliders/galleries, social, redirects, comments, editors, utilities, wishlist/compare/reviews, recommendations, ACF/CPT, popups, translation, roles, email config, WooCommerce page builders. When in doubt, DON'T add it here."
+    },
+
+    "cart": {
+      "_description": "WooCommerce cart page. Similar to checkout but slightly less aggressive — some upsell/recommendation plugins may be intentional here.",
+
+      "suppress": [
+        "wordpress-seo",
+        "all-in-one-seo-pack",
+        "rank-math-seo",
+        "the-seo-framework",
+
+        "elementor",
+        "elementor-pro",
+        "js_composer",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+        "gravityforms",
+        "ninja-forms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+
+        "wp-smushit",
+        "ewww-image-optimizer",
+        "imagify",
+        "shortpixel-image-optimiser",
+
+        "revslider",
+        "ml-slider",
+        "nextgen-gallery",
+
+        "social-warfare",
+        "shareaholic",
+        "monarch",
+        "instagram-feed",
+        "custom-facebook-feed",
+
+        "redirection",
+        "safe-redirect-manager",
+
+        "akismet",
+        "disqus-comment-system",
+
+        "classic-editor",
+        "classic-widgets",
+
+        "tablepress",
+        "easy-table-of-contents",
+        "broken-link-checker",
+
+        "popup-maker",
+        "optinmonster",
+
+        "loco-translate"
+      ]
+    },
+
+    "frontend": {
+      "_description": "Non-WooCommerce frontend pages (blog, about, contact, etc.). Suppress WooCommerce-heavy plugins that have no business on content pages.",
+
+      "suppress": [
+        "yith-woocommerce-wishlist",
+        "yith-woocommerce-compare",
+        "yith-woocommerce-advanced-reviews",
+        "ti-woocommerce-wishlist",
+        "woocommerce-product-recommendations",
+        "recently-viewed-products-for-woocommerce",
+        "clerk-io",
+        "woolentor-addons",
+        "woolentor-addons-pro"
+      ],
+
+      "_comment_frontend": "Light touch. Only suppress plugins explicitly tied to WooCommerce product/shop pages that have no frontend function."
+    }
+  }
+}
