@@ -3,15 +3,17 @@
  * ContextLoad — Context-aware plugin loading for WooCommerce
  *
  * Suppresses unnecessary plugin bootstrap based on request context (checkout, cart,
- * frontend, etc.) by filtering the active_plugins option before WordPress loads them.
- * Plugins not needed for the current context never get require_once'd — their PHP bootstrap cost is eliminated.
+ * rest:namespace, ajax:action, etc.) by filtering the active_plugins option before
+ * WordPress loads them. Plugins not needed for the current context never get
+ * require_once'd — their PHP bootstrap cost is eliminated.
  *
- * Deploy: Copy contextload.php + contextload-config.json to wp-content/mu-plugins/
+ * Deploy: Copy contextload.php + contextload-config.json (and optionally a
+ * default base config referenced via "extends") to wp-content/mu-plugins/
  *
  * Kill switch: define('CONTEXTLOAD_DISABLED', true) in wp-config.php
  * Debug mode:  define('CONTEXTLOAD_DEBUG', true) in wp-config.php
  *
- * @version 1.0.0
+ * @version 1.2.0
  */
 
 if ( defined( 'CONTEXTLOAD_DISABLED' ) && CONTEXTLOAD_DISABLED ) {
@@ -30,7 +32,7 @@ if ( function_exists( 'is_multisite' ) && is_multisite() ) {
 
 final class ContextLoad {
 
-	const VERSION    = '1.0.0';
+	const VERSION    = '1.2.0';
 	const CONFIG_FILE = 'contextload-config.json';
 	const CACHE_FILE  = 'contextload-wc-cache.php';
 
@@ -104,20 +106,16 @@ final class ContextLoad {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Load and validate the JSON config file.
+	 * Load and validate the JSON config file. Supports `extends` for inheritance.
 	 */
 	private function load_config() {
-		if ( ! file_exists( $this->config_path ) ) {
+		$config = $this->load_json_file( $this->config_path );
+		if ( ! $config ) {
 			return null;
 		}
 
-		$json   = file_get_contents( $this->config_path );
-		$config = json_decode( $json, true );
-
-		if ( JSON_ERROR_NONE !== json_last_error() ) {
-			$this->log( 'Invalid config JSON: ' . json_last_error_msg() );
-			return null;
-		}
+		// v1.2: chase `extends` chain (single-level by default; nested extends supported).
+		$config = $this->resolve_extends( $config, $this->config_path, array() );
 
 		if ( empty( $config['contexts'] ) || ! is_array( $config['contexts'] ) ) {
 			$this->log( 'Config missing "contexts" — loading all plugins.' );
@@ -127,6 +125,106 @@ final class ContextLoad {
 		return $config;
 	}
 
+	/**
+	 * Load and JSON-decode a single config file. Returns null on failure.
+	 */
+	private function load_json_file( $path ) {
+		if ( ! file_exists( $path ) ) {
+			return null;
+		}
+
+		$json   = file_get_contents( $path );
+		$config = json_decode( $json, true );
+
+		if ( JSON_ERROR_NONE !== json_last_error() ) {
+			$this->log( 'Invalid JSON in ' . basename( $path ) . ': ' . json_last_error_msg() );
+			return null;
+		}
+
+		return $config;
+	}
+
+	/**
+	 * Resolve "extends" chain recursively. Child deep-merges over parent.
+	 * Cycle-safe via $seen path tracking. Parent path resolved relative to child file.
+	 */
+	private function resolve_extends( $config, $config_path, $seen ) {
+		if ( empty( $config['extends'] ) ) {
+			return $config;
+		}
+
+		$canonical = realpath( $config_path ) ?: $config_path;
+		if ( in_array( $canonical, $seen, true ) ) {
+			$this->log( 'extends cycle detected at ' . basename( $config_path ) );
+			unset( $config['extends'] );
+			return $config;
+		}
+		$seen[] = $canonical;
+
+		$parent_ref = $config['extends'];
+		// Resolve relative to current config file's directory.
+		$parent_path = ( '/' === substr( $parent_ref, 0, 1 ) )
+			? $parent_ref
+			: dirname( $config_path ) . '/' . $parent_ref;
+
+		$parent = $this->load_json_file( $parent_path );
+		if ( ! $parent ) {
+			$this->log( 'extends parent not loadable: ' . $parent_ref );
+			unset( $config['extends'] );
+			return $config;
+		}
+
+		// Recurse so grandparents resolve before merge.
+		$parent = $this->resolve_extends( $parent, $parent_path, $seen );
+
+		unset( $config['extends'] );
+		return $this->deep_merge( $parent, $config );
+	}
+
+	/**
+	 * Deep-merge child over parent:
+	 *  - Scalars in child override parent
+	 *  - Numeric (list) arrays append + dedupe
+	 *  - Associative arrays recursively merge
+	 */
+	private function deep_merge( $parent, $child ) {
+		if ( ! is_array( $parent ) || ! is_array( $child ) ) {
+			return $child;
+		}
+		foreach ( $child as $key => $value ) {
+			if ( ! array_key_exists( $key, $parent ) ) {
+				$parent[ $key ] = $value;
+				continue;
+			}
+			if ( is_array( $value ) && is_array( $parent[ $key ] ) ) {
+				if ( $this->is_list( $parent[ $key ] ) && $this->is_list( $value ) ) {
+					$parent[ $key ] = array_values( array_unique(
+						array_merge( $parent[ $key ], $value ),
+						SORT_STRING
+					) );
+				} else {
+					$parent[ $key ] = $this->deep_merge( $parent[ $key ], $value );
+				}
+			} else {
+				$parent[ $key ] = $value;
+			}
+		}
+		return $parent;
+	}
+
+	/**
+	 * Detect numeric/list array (vs associative). PHP 8.1+ has array_is_list().
+	 */
+	private function is_list( $arr ) {
+		if ( empty( $arr ) ) {
+			return true;
+		}
+		if ( function_exists( 'array_is_list' ) ) {
+			return array_is_list( $arr );
+		}
+		return array_keys( $arr ) === range( 0, count( $arr ) - 1 );
+	}
+
 	// -----------------------------------------------------------------------
 	// Context Detection
 	// -----------------------------------------------------------------------
@@ -134,6 +232,11 @@ final class ContextLoad {
 	/**
 	 * Determine request context from URL and server variables.
 	 * Runs before plugins load — only raw PHP and $_SERVER available.
+	 *
+	 * Returned context format:
+	 *  - 'cron' / 'admin' / 'checkout' / 'cart' / 'account' / 'shop' / 'product' / 'frontend'
+	 *  - 'ajax' OR 'ajax:<action>'
+	 *  - 'rest' OR 'rest:<namespace/version>' (v1.2)
 	 */
 	private function detect_context() {
 		$uri    = $_SERVER['REQUEST_URI'] ?? '';
@@ -155,9 +258,10 @@ final class ContextLoad {
 			return 'ajax' . ( $action ? ':' . $action : '' );
 		}
 
-		// REST API
+		// REST API (v1.2: extract namespace for sub-routing)
 		if ( false !== strpos( $path, '/wp-json/' ) || isset( $_GET['rest_route'] ) ) {
-			return 'rest';
+			$namespace = $this->extract_rest_namespace( $uri );
+			return 'rest' . ( $namespace ? ':' . $namespace : '' );
 		}
 
 		// WP Admin — NOT using is_admin() because WP_ADMIN may not be defined yet at
@@ -191,6 +295,32 @@ final class ContextLoad {
 		}
 
 		return 'frontend';
+	}
+
+	/**
+	 * v1.2: Extract the REST namespace (vendor/version) from the request URI.
+	 * Returns empty string if not parseable.
+	 */
+	private function extract_rest_namespace( $uri ) {
+		if ( false !== strpos( $uri, 'rest_route=' ) ) {
+			$query = parse_url( $uri, PHP_URL_QUERY );
+			parse_str( $query ?? '', $params );
+			$rest_path = $params['rest_route'] ?? '';
+		} else {
+			$pos       = strpos( $uri, '/wp-json/' );
+			$rest_path = ( false !== $pos ) ? substr( $uri, $pos + 9 ) : '';
+		}
+
+		$rest_path = strtok( ltrim( $rest_path, '/' ), '?' );
+		if ( false === $rest_path || '' === $rest_path ) {
+			return '';
+		}
+
+		$segments = explode( '/', $rest_path );
+		if ( count( $segments ) >= 2 ) {
+			return $segments[0] . '/' . $segments[1];
+		}
+		return $segments[0] ?? '';
 	}
 
 	/**
@@ -243,6 +373,12 @@ final class ContextLoad {
 			return $plugins; // No rules for this context = load everything
 		}
 
+		// v1.2: optional safety bypass for logged-in users on this context.
+		if ( $this->should_bypass_logged_in( $context_config ) ) {
+			$this->filtered_cache = $plugins;
+			return $plugins;
+		}
+
 		$suppress_patterns = $context_config['suppress'];
 		$never_patterns    = $this->resolve_never_suppress( $context_config );
 
@@ -263,34 +399,95 @@ final class ContextLoad {
 
 	/**
 	 * Resolve which context config block applies to the current request.
-	 * Handles AJAX action-specific rules with wildcard fallback.
+	 *
+	 * v1.2: Handles both AJAX action sub-routing AND REST namespace sub-routing
+	 * via the same pattern (exact then wildcard then fallback to parent context).
+	 *
+	 * Public so the simulate CLI can reuse the exact resolution path.
 	 */
-	private function resolve_context_config() {
-		$contexts = $this->config['contexts'];
+	public function resolve_context_config() {
+		return $this->resolve_context_config_for( $this->context );
+	}
 
-		// For AJAX: check action-specific rules, then generic ajax rules
-		if ( 0 === strpos( $this->context, 'ajax:' ) ) {
-			$action = substr( $this->context, 5 );
+	/**
+	 * Resolve the config block for an arbitrary context string. Used by simulate.
+	 */
+	public function resolve_context_config_for( $context ) {
+		if ( ! $context ) {
+			return null;
+		}
+		$contexts = $this->config['contexts'] ?? array();
 
-			// Check for action-specific override in ajax.actions config
-			if ( isset( $contexts['ajax']['actions'] ) && $action ) {
-				// Exact action match
-				if ( isset( $contexts['ajax']['actions'][ $action ] ) ) {
-					return $contexts['ajax']['actions'][ $action ];
-				}
-				// Wildcard action match (e.g., woocommerce_*)
-				foreach ( $contexts['ajax']['actions'] as $pattern => $rules ) {
-					if ( $this->glob_match( $pattern, $action ) ) {
-						return $rules;
-					}
-				}
+		// AJAX: ajax:<action> → contexts.ajax.actions[<action>] → contexts.ajax
+		if ( 0 === strpos( $context, 'ajax:' ) ) {
+			$action = substr( $context, 5 );
+			$sub    = $this->lookup_sub_route( $contexts, 'ajax', 'actions', $action );
+			if ( null !== $sub ) {
+				return $sub;
 			}
-
-			// Fall back to generic ajax config
 			return $contexts['ajax'] ?? null;
 		}
 
-		return $contexts[ $this->context ] ?? null;
+		// REST: rest:<namespace> → contexts.rest.namespaces[<namespace>] → contexts.rest
+		if ( 0 === strpos( $context, 'rest:' ) ) {
+			$ns  = substr( $context, 5 );
+			$sub = $this->lookup_sub_route( $contexts, 'rest', 'namespaces', $ns );
+			if ( null !== $sub ) {
+				return $sub;
+			}
+			return $contexts['rest'] ?? null;
+		}
+
+		return $contexts[ $context ] ?? null;
+	}
+
+	/**
+	 * Shared sub-route resolver for AJAX actions and REST namespaces.
+	 * Returns matched rule block or null. Does NOT fall back to parent context here
+	 * (caller handles fallback) so an empty rule block can intentionally opt out.
+	 */
+	private function lookup_sub_route( $contexts, $parent_key, $sub_map_key, $needle ) {
+		if ( ! $needle || ! isset( $contexts[ $parent_key ][ $sub_map_key ] ) ) {
+			return null;
+		}
+		$sub_map = $contexts[ $parent_key ][ $sub_map_key ];
+
+		// Exact match first
+		if ( isset( $sub_map[ $needle ] ) ) {
+			return $sub_map[ $needle ];
+		}
+		// Wildcard match (longest pattern wins for determinism)
+		$matches = array();
+		foreach ( $sub_map as $pattern => $rules ) {
+			if ( $this->glob_match( $pattern, $needle ) ) {
+				$matches[ $pattern ] = $rules;
+			}
+		}
+		if ( $matches ) {
+			uksort( $matches, function ( $a, $b ) {
+				return strlen( $b ) - strlen( $a );
+			} );
+			return reset( $matches );
+		}
+		return null;
+	}
+
+	/**
+	 * v1.2: Check whether this request should bypass suppression because user is logged in.
+	 * Generalizable to any context — opt-in via context-level "bypass_if_logged_in": true.
+	 * Mirrors the wpjson-opt safety pattern for protecting editors hitting REST/admin paths.
+	 */
+	private function should_bypass_logged_in( $context_config ) {
+		if ( empty( $context_config['bypass_if_logged_in'] ) ) {
+			return false;
+		}
+		foreach ( array_keys( $_COOKIE ) as $cookie ) {
+			if ( 0 === strpos( $cookie, 'wordpress_logged_in_' )
+				|| 0 === strpos( $cookie, 'wordpress_sec_' ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -305,8 +502,10 @@ final class ContextLoad {
 	/**
 	 * Determine whether a specific plugin should be suppressed.
 	 * never_suppress always wins over suppress.
+	 *
+	 * Public so the simulate CLI can reuse the exact matching path.
 	 */
-	private function should_suppress( $plugin, $suppress_patterns, $never_patterns ) {
+	public function should_suppress( $plugin, $suppress_patterns, $never_patterns ) {
 		// Safety rail: never_suppress overrides everything
 		foreach ( $never_patterns as $pattern ) {
 			if ( $this->matches_plugin( $pattern, $plugin ) ) {
@@ -561,37 +760,34 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 		}
 
 		/**
-		 * Show current config and detected context for a given URL.
-		 *
-		 * ## OPTIONS
-		 *
-		 * [--url=<url>]
-		 * : Simulate detection for this URL path (e.g. /checkout/)
+		 * Show current config (after extends merging) and counts per context.
 		 *
 		 * ## EXAMPLES
 		 *     wp contextload status
-		 *     wp contextload status --url=/checkout/
 		 *
 		 * @subcommand status
 		 */
 		public function status( $args, $assoc_args ) {
-			$config_path = __DIR__ . '/' . ContextLoad::CONFIG_FILE;
+			$loader = ContextLoad::boot();
+			$config = $loader->get_config();
 
-			if ( ! file_exists( $config_path ) ) {
-				WP_CLI::error( 'Config file not found: ' . $config_path );
+			if ( ! $config ) {
+				WP_CLI::error( 'No valid config loaded.' );
 			}
 
-			$config = json_decode( file_get_contents( $config_path ), true );
 			WP_CLI::log( 'ContextLoad v' . ContextLoad::VERSION );
 			WP_CLI::log( 'Mode: ' . ( $config['mode'] ?? 'active' ) );
 			WP_CLI::log( 'Contexts configured: ' . implode( ', ', array_keys( $config['contexts'] ?? array() ) ) );
 
 			$never = $config['never_suppress'] ?? array();
-			WP_CLI::log( 'Global never_suppress: ' . implode( ', ', $never ) );
+			WP_CLI::log( 'Global never_suppress (' . count( $never ) . '): ' . implode( ', ', $never ) );
 
 			foreach ( $config['contexts'] as $ctx => $rules ) {
-				$count = count( $rules['suppress'] ?? array() );
-				WP_CLI::log( "  {$ctx}: {$count} suppress rules" );
+				$count   = count( $rules['suppress'] ?? array() );
+				$bypass  = ! empty( $rules['bypass_if_logged_in'] ) ? ' [bypass-if-logged-in]' : '';
+				$subkey  = isset( $rules['actions'] ) ? 'actions' : ( isset( $rules['namespaces'] ) ? 'namespaces' : null );
+				$subs    = $subkey ? ' (' . count( $rules[ $subkey ] ) . ' ' . $subkey . ')' : '';
+				WP_CLI::log( "  {$ctx}: {$count} suppress rules{$subs}{$bypass}" );
 			}
 
 			// Cache status
@@ -610,37 +806,59 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 		/**
 		 * Simulate what would be suppressed for a specific URL.
 		 *
+		 * v1.2: Honors REST namespace sub-routing and AJAX action sub-routing.
+		 *       Does NOT simulate bypass_if_logged_in (CLI has no cookies).
+		 *
 		 * ## OPTIONS
 		 *
 		 * <url>
-		 * : The URL path to simulate (e.g. /checkout/)
+		 * : The URL path to simulate (e.g. /checkout/, /wp-json/pys-facebook/v1/event, /wp-admin/admin-ajax.php?action=pys_get_pbid)
 		 *
 		 * ## EXAMPLES
 		 *     wp contextload simulate /checkout/
-		 *     wp contextload simulate /cart/
-		 *     wp contextload simulate /blog/my-post/
+		 *     wp contextload simulate /wp-json/pys-facebook/v1/event
+		 *     wp contextload simulate '/wp-admin/admin-ajax.php?action=pys_get_pbid'
 		 *
 		 * @subcommand simulate
 		 */
 		public function simulate( $args, $assoc_args ) {
 			$url = $args[0] ?? '/';
 
-			// Temporarily override REQUEST_URI for context detection
-			$original_uri              = $_SERVER['REQUEST_URI'] ?? '';
-			$original_script           = $_SERVER['SCRIPT_NAME'] ?? '';
-			$_SERVER['REQUEST_URI']    = $url;
-			$_SERVER['SCRIPT_NAME']    = 'index.php';
+			// Save and override request env so detect_context sees the simulated request.
+			$original_uri    = $_SERVER['REQUEST_URI'] ?? '';
+			$original_script = $_SERVER['SCRIPT_NAME'] ?? '';
+			$original_get    = $_GET;
+			$original_req    = $_REQUEST;
 
-			// Fresh detection
+			$_SERVER['REQUEST_URI'] = $url;
+
+			// Reproduce how PHP/WP set SCRIPT_NAME + populate $_GET for the URL.
+			$path  = parse_url( $url, PHP_URL_PATH ) ?? '/';
+			$query = parse_url( $url, PHP_URL_QUERY ) ?? '';
+			parse_str( $query, $parsed_query );
+
+			if ( false !== strpos( $path, 'admin-ajax.php' ) ) {
+				$_SERVER['SCRIPT_NAME'] = '/wp-admin/admin-ajax.php';
+			} elseif ( false !== strpos( $path, 'wp-cron.php' ) ) {
+				$_SERVER['SCRIPT_NAME'] = '/wp-cron.php';
+			} else {
+				$_SERVER['SCRIPT_NAME'] = '/index.php';
+			}
+
+			$_GET     = $parsed_query;
+			$_REQUEST = array_merge( $original_req, $parsed_query );
+
+			$loader  = ContextLoad::boot();
 			$reflect = new ReflectionClass( 'ContextLoad' );
 			$method  = $reflect->getMethod( 'detect_context' );
 			$method->setAccessible( true );
-
-			$loader  = ContextLoad::boot();
 			$context = $method->invoke( $loader );
 
+			// Restore env
 			$_SERVER['REQUEST_URI']  = $original_uri;
 			$_SERVER['SCRIPT_NAME'] = $original_script;
+			$_GET                    = $original_get;
+			$_REQUEST                = $original_req;
 
 			WP_CLI::log( "URL: {$url}" );
 			WP_CLI::log( "Detected context: {$context}" );
@@ -651,10 +869,16 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 				return;
 			}
 
-			$context_rules = $config['contexts'][ $context ] ?? null;
+			// Use the same resolution path as production (handles ajax:* + rest:* sub-routing).
+			$context_rules = $loader->resolve_context_config_for( $context );
 			if ( ! $context_rules || empty( $context_rules['suppress'] ) ) {
 				WP_CLI::log( 'No suppress rules for this context. All plugins load.' );
 				return;
+			}
+
+			$bypass = ! empty( $context_rules['bypass_if_logged_in'] );
+			if ( $bypass ) {
+				WP_CLI::log( 'NOTE: bypass_if_logged_in=true on this context. Logged-in users will skip suppression in production.' );
 			}
 
 			$plugins = get_option( 'active_plugins', array() );
@@ -669,34 +893,35 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 
 			$would_suppress = 0;
 			$would_load     = 0;
+			$would_protect  = 0;
 
 			foreach ( $plugins as $plugin ) {
-				$dir       = dirname( $plugin );
+				// PROTECT first (never_suppress wins)
 				$protected = false;
-
 				foreach ( $never as $pattern ) {
-					if ( $dir === $pattern || fnmatch( $pattern, $dir ) ) {
+					if ( $this->cli_matches( $pattern, $plugin ) ) {
 						$protected = true;
 						break;
 					}
 				}
+				if ( $protected ) {
+					WP_CLI::log( "  PROTECT:  {$plugin}" );
+					$would_load++;
+					$would_protect++;
+					continue;
+				}
 
 				$suppressed = false;
-				if ( ! $protected ) {
-					foreach ( $context_rules['suppress'] as $pattern ) {
-						if ( $dir === $pattern || $pattern === $plugin || fnmatch( $pattern, $dir ) ) {
-							$suppressed = true;
-							break;
-						}
+				foreach ( $context_rules['suppress'] as $pattern ) {
+					if ( $this->cli_matches( $pattern, $plugin ) ) {
+						$suppressed = true;
+						break;
 					}
 				}
 
 				if ( $suppressed ) {
 					WP_CLI::log( "  SUPPRESS: {$plugin}" );
 					$would_suppress++;
-				} elseif ( $protected ) {
-					WP_CLI::log( "  PROTECT:  {$plugin}" );
-					$would_load++;
 				} else {
 					WP_CLI::log( "  LOAD:     {$plugin}" );
 					$would_load++;
@@ -704,7 +929,80 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			}
 
 			WP_CLI::log( '' );
-			WP_CLI::success( "Would load {$would_load}, suppress {$would_suppress} of " . count( $plugins ) . ' plugins.' );
+			WP_CLI::success( sprintf(
+				'Would load %d (incl. %d protected), suppress %d of %d plugins.',
+				$would_load,
+				$would_protect,
+				$would_suppress,
+				count( $plugins )
+			) );
+		}
+
+		/**
+		 * Pattern matcher mirroring ContextLoad::matches_plugin() (private).
+		 * Kept in CLI to avoid exposing the internal matcher.
+		 */
+		private function cli_matches( $pattern, $plugin ) {
+			$dir = dirname( $plugin );
+			if ( '.' === $dir ) {
+				$dir = $plugin;
+			}
+			if ( false !== strpos( $pattern, '/' ) ) {
+				return $pattern === $plugin || fnmatch( $pattern, $plugin );
+			}
+			if ( false !== strpos( $pattern, '*' ) || false !== strpos( $pattern, '?' ) ) {
+				return fnmatch( $pattern, $dir );
+			}
+			return $pattern === $dir;
+		}
+
+		/**
+		 * Validate the loaded config and surface common mistakes.
+		 *
+		 * v1.2: New command. Checks for: never_suppress vs suppress conflicts,
+		 * unknown context keys, malformed sub-routing maps.
+		 *
+		 * ## EXAMPLES
+		 *     wp contextload validate
+		 *
+		 * @subcommand validate
+		 */
+		public function validate( $args, $assoc_args ) {
+			$loader = ContextLoad::boot();
+			$config = $loader->get_config();
+			if ( ! $config ) {
+				WP_CLI::error( 'No valid config loaded.' );
+			}
+
+			$known_contexts = array(
+				'checkout', 'cart', 'account', 'shop', 'product',
+				'frontend', 'admin', 'cron', 'ajax', 'rest',
+			);
+			$warnings = 0;
+
+			foreach ( $config['contexts'] as $ctx => $rules ) {
+				if ( ! in_array( $ctx, $known_contexts, true ) ) {
+					WP_CLI::warning( "Unknown context key: {$ctx}. detect_context() never returns this." );
+					$warnings++;
+				}
+				$suppress = $rules['suppress'] ?? array();
+				$never    = array_merge(
+					$config['never_suppress'] ?? array(),
+					$rules['never_suppress'] ?? array()
+				);
+				foreach ( $suppress as $pat ) {
+					if ( in_array( $pat, $never, true ) ) {
+						WP_CLI::warning( "{$ctx}: '{$pat}' appears in BOTH suppress and never_suppress. never_suppress wins." );
+						$warnings++;
+					}
+				}
+			}
+
+			if ( 0 === $warnings ) {
+				WP_CLI::success( 'Config valid. No conflicts detected.' );
+			} else {
+				WP_CLI::log( "Validation complete with {$warnings} warning(s)." );
+			}
 		}
 	}
 }

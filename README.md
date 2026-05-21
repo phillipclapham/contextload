@@ -6,6 +6,13 @@ ContextLoad is a WordPress mu-plugin that suppresses unnecessary plugin bootstra
 
 On a WooCommerce site with 45 active plugins, ContextLoad reduced checkout TTFB by **1.12 seconds (24.6%)** by loading only the 15 plugins actually needed for checkout. No visual degradation, no functional impact. Just faster pages.
 
+**v1.2 highlights** (2026-05-21):
+- Four new contexts ship by default: `rest`, `account`, `shop`, `product`.
+- **REST namespace sub-routing** — per-namespace overrides under `contexts.rest.namespaces` (mirror of the existing `contexts.ajax.actions` pattern). Lets you aggressively suppress on known-anonymous endpoints (e.g. server-side tracking event handlers) without changing behavior on editor traffic.
+- **`bypass_if_logged_in` safety flag** — opt-in per context. When set true and the request carries a `wordpress_logged_in_*` cookie, suppression is skipped entirely. The default `rest` context ships with this on so Gutenberg / WC Admin REST workflows are protected out of the box.
+- **Config inheritance via `extends`** — a site overlay can `extends: "contextload-config-base.json"` and only declare site-specific additions. Lists append-dedupe, objects deep-merge, scalars override. Cycle-safe.
+- New CLI command `wp contextload validate` flags `never_suppress` vs `suppress` conflicts and unknown context keys.
+
 ## The Problem
 
 WordPress loads every active plugin on every request. A WooCommerce site with 40+ plugins bootstraps all of them on the checkout page — even SEO plugins, page builders, import tools, image optimizers, and review widgets that have nothing to do with completing a purchase.
@@ -212,13 +219,24 @@ Contexts with no suppress rules in the config load all plugins (fail-open).
 # Build WooCommerce slug cache from current settings
 wp contextload build-cache
 
-# Show config status, mode, and cache state
+# Show config status, mode, and cache state (post-extends merge)
 wp contextload status
+
+# Validate the loaded config (suppress vs never_suppress conflicts, unknown context keys) - v1.2
+wp contextload validate
 
 # Simulate suppression for a specific URL
 wp contextload simulate /checkout/
 wp contextload simulate /cart/
 wp contextload simulate /blog/my-post/
+
+# v1.2: REST namespace sub-routing examples
+wp contextload simulate /wp-json/wc/v3/products/123/variations
+wp contextload simulate /wp-json/pys-facebook/v1/event
+
+# v1.2: AJAX action examples (the action= query param is parsed)
+wp contextload simulate '/wp-admin/admin-ajax.php?action=woocommerce_update_order_review'
+wp contextload simulate '/wp-admin/admin-ajax.php?action=pys_get_pbid'
 ```
 
 ## Safety Design
@@ -251,11 +269,38 @@ The default config includes ~100 common plugins known to be safe to suppress on 
 - **Elementor sites:** `elementor`, `elementor-pro` (if checkout is built with Elementor)
 - **ACF-dependent themes:** `advanced-custom-fields-pro` (if theme uses ACF on checkout)
 
+### Site overlays (v1.2)
+
+For multi-site deployments, keep one canonical base config and have each site declare only its specifics:
+
+```json
+{
+  "extends": "contextload-config-base.json",
+  "version": "1.2-mysite",
+  "mode": "dryrun",
+  "never_suppress": ["mysite-custom-plugin"],
+  "contexts": {
+    "rest": {
+      "namespaces": {
+        "my-tracker/v1": {
+          "bypass_if_logged_in": false,
+          "suppress": ["elementor", "newsletter", "loco-translate"]
+        }
+      }
+    }
+  }
+}
+```
+
+Parent loads first, child deep-merges over. Lists (`suppress`, `never_suppress`) append-dedupe; objects (`contexts`, `namespaces`, `actions`) merge recursively; scalars override. The `extends` path is resolved relative to the child file's directory (or absolute if it starts with `/`). Cycle-safe via `realpath` tracking.
+
+Typical pattern in a fleet deployment: ship the default config as `contextload-config-base.json`, then per-site `contextload-config.json` files declare only their `extends` target + site-specific additions.
+
 ## Known Limitations
 
 - **`is_plugin_active()` returns false for suppressed plugins.** This is inherent to the mechanism. WooCommerce and other plugins that check `is_plugin_active()` at load time will see suppressed plugins as inactive. This is correct behavior (the plugin isn't active on this request), but it's a config authoring constraint: verify that no always-loaded plugin makes critical decisions based on a suppressed plugin's presence.
 
-- **REST API is a single context.** All plugins load on `/wp-json/` requests. This is intentional: modern WooCommerce (Blocks checkout) uses REST for payment processing. Suppressing plugins on REST risks silent checkout failure. The performance gain on REST is minimal (no template rendering), while the risk is high.
+- **REST suppression requires care** (v1.2 update). REST is no longer a single bucket — the default `rest` context ships with a conservative suppress list and `bypass_if_logged_in: true` so editor REST workflows (Gutenberg, WC Admin) stay protected. Per-namespace overrides under `contexts.rest.namespaces.<vendor/version>` can opt out of the bypass and apply more aggressive rules to known-anonymous endpoints (e.g. server-side tracking POSTs from external services). Modern WooCommerce Blocks checkout uses `wc/store` — keep that namespace untouched or whitelist it explicitly.
 
 - **Plugin dependency chains.** If Plugin A depends on Plugin B and you suppress B, Plugin A may fatal. Dryrun mode is designed to surface these issues before activation. Always test in dryrun first.
 

@@ -1,8 +1,9 @@
 {
-  "version": "1.0",
+  "version": "1.2",
   "mode": "dryrun",
 
   "_comment_mode": "dryrun = logs what would be suppressed but loads everything. active = actually suppresses. disabled = off.",
+  "_comment_v12": "v1.2 adds: rest/account/shop/product contexts, rest.namespaces sub-routing (mirrors ajax.actions), bypass_if_logged_in safety flag, and `extends` for config inheritance. All additions are opt-in / backward-compatible with v1.0 configs.",
 
   "never_suppress": [
     "woocommerce",
@@ -41,7 +42,7 @@
     "jetpack-boost"
   ],
 
-  "_comment_never_suppress": "Global safety rail. These ALWAYS load regardless of context. Globs for gateway/shipping families. Intentionally NO wc-*/woo-* broad globs — those protect cache-breaking plugins (woo-variation-swatches etc). Add specific WC extensions here as needed.",
+  "_comment_never_suppress": "Global safety rail. These ALWAYS load regardless of context. Globs for gateway/shipping families. Intentionally NO wc-*/woo-* broad globs — those protect cache-breaking plugins (woo-variation-swatches etc). Add specific WC extensions here as needed in site overlays.",
 
   "contexts": {
     "checkout": {
@@ -237,6 +238,106 @@
       ]
     },
 
+    "account": {
+      "_description": "v1.2: WC My Account. Customers manage subscriptions, wishlist, points, orders. Suppress page builders/SEO/forms/distractions; customer-state plugins (wishlist/points) protected globally via never_suppress on most installs.",
+
+      "suppress": [
+        "wordpress-seo",
+        "all-in-one-seo-pack",
+        "rank-math-seo",
+        "the-seo-framework",
+        "seo-by-rank-math",
+
+        "elementor",
+        "elementor-pro",
+        "js_composer",
+        "beaver-builder-lite-version",
+        "brizy",
+        "bricks",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+        "gravityforms",
+        "ninja-forms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+
+        "revslider",
+        "ml-slider",
+        "nextgen-gallery",
+
+        "social-warfare",
+        "shareaholic",
+        "instagram-feed",
+        "custom-facebook-feed",
+
+        "classic-editor",
+        "classic-widgets",
+
+        "popup-maker",
+        "optinmonster",
+
+        "loco-translate",
+
+        "akismet",
+        "disqus-comment-system"
+      ]
+    },
+
+    "shop": {
+      "_description": "v1.2: WC Shop archive (product listing). Needs filters/search/variation-swatches but doesn't need checkout flow or admin tooling.",
+
+      "suppress": [
+        "wordpress-seo",
+        "all-in-one-seo-pack",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+
+        "classic-editor",
+        "classic-widgets",
+
+        "loco-translate",
+
+        "popup-maker"
+      ]
+    },
+
+    "product": {
+      "_description": "v1.2: WC product page. Needs variation swatches / gallery / reviews. Don't suppress those families.",
+
+      "suppress": [
+        "wordpress-seo",
+        "all-in-one-seo-pack",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+        "gravityforms",
+        "ninja-forms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+
+        "classic-editor",
+        "classic-widgets",
+
+        "loco-translate"
+      ]
+    },
+
     "frontend": {
       "_description": "Non-WooCommerce frontend pages (blog, about, contact, etc.). Suppress WooCommerce-heavy plugins that have no business on content pages.",
 
@@ -253,6 +354,95 @@
       ],
 
       "_comment_frontend": "Light touch. Only suppress plugins explicitly tied to WooCommerce product/shop pages that have no frontend function."
+    },
+
+    "rest": {
+      "_description": "v1.2: REST API catch-all. CONSERVATIVE suppress list (only plugins with zero REST role). bypass_if_logged_in defaults to TRUE to protect Gutenberg / WC Admin / editor REST workflows. Per-namespace overrides via rest.namespaces can opt OUT of the bypass and apply more aggressive rules to known anonymous traffic (server-side tracking endpoints, etc.).",
+
+      "bypass_if_logged_in": true,
+
+      "suppress": [
+        "elementor",
+        "elementor-pro",
+        "js_composer",
+        "beaver-builder-lite-version",
+        "brizy",
+        "bricks",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+        "gravityforms",
+        "ninja-forms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+
+        "revslider",
+        "ml-slider",
+        "nextgen-gallery",
+
+        "social-warfare",
+        "shareaholic",
+        "instagram-feed",
+        "custom-facebook-feed",
+
+        "classic-editor",
+        "classic-widgets",
+
+        "popup-maker",
+        "optinmonster",
+
+        "loco-translate",
+
+        "akismet",
+        "disqus-comment-system"
+      ],
+
+      "namespaces": {
+        "_comment_namespaces": "Site overlays add high-traffic anonymous REST endpoints here (e.g. server-side tracking, public widgets). Set bypass_if_logged_in: false in the override since these routes are not editor traffic. Longest pattern wins for determinism."
+      }
+    },
+
+    "ajax": {
+      "_description": "v1.2 (formalized): admin-ajax.php catch-all. Generic conservative suppress; site overlays add ajax.actions overrides for high-volume actions.",
+
+      "bypass_if_logged_in": false,
+
+      "suppress": [
+        "elementor",
+        "elementor-pro",
+        "js_composer",
+
+        "contact-form-7",
+        "wpforms-lite",
+        "wpforms",
+        "gravityforms",
+        "ninja-forms",
+
+        "updraftplus",
+        "all-in-one-wp-migration",
+        "duplicator",
+        "backwpup",
+
+        "revslider",
+        "ml-slider",
+        "nextgen-gallery",
+
+        "classic-editor",
+        "classic-widgets",
+
+        "popup-maker",
+        "optinmonster",
+
+        "loco-translate"
+      ],
+
+      "actions": {
+        "_comment_actions": "Site overlays add high-volume AJAX action rules here. Wildcards supported (e.g. pys_*, woocommerce_*, as_async_*). Longest pattern wins."
+      }
     }
   }
 }
