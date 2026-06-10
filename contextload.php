@@ -32,7 +32,7 @@ if ( function_exists( 'is_multisite' ) && is_multisite() ) {
 
 final class ContextLoad {
 
-	const VERSION    = '1.2.0';
+	const VERSION    = '1.2.1';
 	const CONFIG_FILE = 'contextload-config.json';
 	const CACHE_FILE  = 'contextload-wc-cache.php';
 
@@ -91,6 +91,18 @@ final class ContextLoad {
 
 		// The core filter — intercepts plugin list before WordPress require_once's them
 		add_filter( 'option_active_plugins', array( $this, 'filter_plugins' ), 1 );
+
+		// CRITICAL write-guard (v1.2.1): the read filter above is runtime-only, but if
+		// ANY code does a read-modify-write of active_plugins during a request where we
+		// have suppressed plugins, it reads our FILTERED list, modifies it, and persists
+		// it — permanently deactivating every plugin we suppressed this request. This was
+		// observed in production: Rank Math Pro's activate_plugin() (fired from its
+		// are_requirements_met() constructor path) and the Freemius SDK's
+		// fs_newest_sdk_plugin_first() both read-modify-write active_plugins on checkout
+		// and AJAX requests, baking the suppression into the database. This guard
+		// re-injects the suppressed plugins into any write so suppression can never leak
+		// into the stored option. PHP_INT_MAX priority so it has the final say.
+		add_filter( 'pre_update_option_active_plugins', array( $this, 'guard_persisted_write' ), PHP_INT_MAX, 2 );
 
 		// After plugins load: register WC cache hooks + debug output
 		add_action( 'plugins_loaded', array( $this, 'register_hooks' ), 1 );
@@ -395,6 +407,42 @@ final class ContextLoad {
 
 		$this->filtered_cache = $filtered;
 		return $filtered;
+	}
+
+	/**
+	 * Write-guard for the active_plugins option (v1.2.1).
+	 *
+	 * Hooked on pre_update_option_active_plugins at PHP_INT_MAX. Any time WordPress is
+	 * about to persist active_plugins, we re-inject the plugins we suppressed this
+	 * request. Without this, a read-modify-write by another plugin (which reads our
+	 * filtered list via the option_active_plugins filter) bakes the suppression into the
+	 * DB and permanently deactivates everything we hid for the current context.
+	 *
+	 * Real-world triggers observed: Rank Math Pro activate_plugin() and the Freemius SDK
+	 * fs_newest_sdk_plugin_first(), both firing on checkout / AJAX requests.
+	 *
+	 * We only ADD BACK our own suppressed entries; we never remove what the caller
+	 * intended to write, so legitimate activations and deactivations are preserved.
+	 *
+	 * @param mixed $value     The new active_plugins value about to be written.
+	 * @param mixed $old_value The previous value (unused; kept for filter signature).
+	 * @return mixed The value with suppressed plugins re-injected.
+	 */
+	public function guard_persisted_write( $value, $old_value ) {
+		// Nothing suppressed this request, or a malformed write: pass through untouched.
+		if ( empty( $this->suppressed ) || ! is_array( $value ) ) {
+			return $value;
+		}
+
+		// Re-inject any suppressed plugin missing from the write, preserving the
+		// caller's ordering and any plugins they legitimately added.
+		$missing = array_diff( $this->suppressed, $value );
+		if ( ! empty( $missing ) ) {
+			$value = array_values( array_merge( $value, $missing ) );
+			$this->log( 'guard_persisted_write: re-injected ' . count( $missing ) . ' suppressed plugin(s) to prevent persisted deactivation: ' . implode( ', ', $missing ) );
+		}
+
+		return $value;
 	}
 
 	/**

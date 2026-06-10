@@ -251,8 +251,13 @@ ContextLoad is designed to **fail open** at every level:
 - **WP-CLI** → all plugins load (CLI needs full stack for maintenance)
 - **Multisite** → ContextLoad disables itself (v1 is single-site only)
 - **WordPress installation/upgrade** → ContextLoad disables itself
+- **Persisted-write guard (v1.2.1)** → the `option_active_plugins` filter is runtime-only, but if any plugin does a read-modify-write of `active_plugins` during a request where ContextLoad has suppressed plugins, it would read the filtered list and persist it — permanently deactivating the suppressed plugins. ContextLoad guards `pre_update_option_active_plugins` and re-injects the suppressed plugins into any write, so suppression can never leak into the stored option.
 
 The worst failure mode is "all plugins load" — which is normal WordPress behavior. ContextLoad can never make things worse than the baseline.
+
+### v1.2.1 — Critical fix: persisted deactivation
+
+Versions ≤ 1.2.0 had a serious bug: a runtime read-filter on `active_plugins` is safe in isolation, but real plugins perform read-modify-writes of that option during normal requests. **Rank Math Pro** (`activate_plugin()` from its `are_requirements_met()` constructor path) and any **Freemius-SDK plugin** (`fs_newest_sdk_plugin_first()`) both read-modify-write `active_plugins` on checkout and AJAX requests. They read ContextLoad's *filtered* list, append themselves, and persist it — permanently deactivating every plugin ContextLoad suppressed for that context (observed in production: 16 plugins, including the page builder, deactivated by a single checkout). v1.2.1 adds `guard_persisted_write()` on `pre_update_option_active_plugins` to re-inject suppressed plugins before any write reaches the database. Verified against the exact real-checkout trigger.
 
 ## Customizing for a Site
 
